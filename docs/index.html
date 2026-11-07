@@ -1,0 +1,859 @@
+cd ~/bio_link && cat > app.py << 'PYEOF'
+#!/usr/bin/env python3
+# ==========================================================
+#  ALFILIATOR // ATELIER NODE v4 — 10 ruang, hardened
+#  python app.py   |   PORT=8888
+# ==========================================================
+import os, time, html, http.server, socketserver
+from collections import defaultdict, deque
+
+PORT = int(os.environ.get("PORT", "8888"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+WA   = "https://wa.me/6281292442362"
+BASE = "http://localhost:%d" % PORT
+
+RATE_LIMIT = 90          # request
+RATE_WINDOW = 60         # per detik
+_hits = defaultdict(deque)
+
+CSS = r"""
+:root{
+  --bg:#07070a;--panel:#0d0d13;--panel2:#111118;
+  --line:rgba(212,175,122,.16);--line2:rgba(255,255,255,.07);
+  --ink:#f4f1ea;--muted:#8f8b81;--dim:#5f5c55;
+  --gold:#d4af7a;--gold2:#f0d9b0;--deep:#0a0a0e;
+  --ease:cubic-bezier(.16,1,.3,1);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth;scroll-padding-top:92px}
+body{font-family:'Sora',sans-serif;background:var(--bg);color:var(--ink);
+  line-height:1.7;overflow-x:hidden;-webkit-font-smoothing:antialiased;
+  animation:pg .6s var(--ease)}
+@keyframes pg{from{opacity:0}}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+.wrap{width:min(1200px,100% - 44px);margin-inline:auto}
+.mono{font-family:'JetBrains Mono',monospace}
+.serif{font-family:'Playfair Display',serif}
+
+/* progress + cursor */
+#prog{position:fixed;top:0;left:0;height:2px;width:0;z-index:95;
+  background:linear-gradient(90deg,var(--gold),var(--gold2));box-shadow:0 0 14px var(--gold)}
+#cur{position:fixed;top:0;left:0;width:360px;height:360px;border-radius:50%;z-index:0;
+  pointer-events:none;opacity:0;transition:opacity .5s;
+  background:radial-gradient(circle,rgba(212,175,122,.09),transparent 62%);
+  transform:translate(-50%,-50%)}
+@media(pointer:fine){#cur{opacity:1}}
+
+/* latar */
+.bgfx{position:fixed;inset:0;z-index:-3;pointer-events:none;overflow:hidden}
+.bgfx .orb{position:absolute;border-radius:50%;filter:blur(100px);opacity:.32;will-change:transform}
+.bgfx .o1{width:50vmax;height:50vmax;left:-16%;top:-20%;background:radial-gradient(circle,#6b5326,transparent 70%)}
+.bgfx .o2{width:44vmax;height:44vmax;right:-18%;top:30%;background:radial-gradient(circle,#2a3f52,transparent 70%)}
+.bgfx .o3{width:38vmax;height:38vmax;left:30%;bottom:-24%;background:radial-gradient(circle,#4a3520,transparent 72%)}
+.bgfx .mesh{position:absolute;inset:0;opacity:.2;
+  background-image:linear-gradient(var(--line2) 1px,transparent 1px),linear-gradient(90deg,var(--line2) 1px,transparent 1px);
+  background-size:84px 84px;
+  mask-image:radial-gradient(ellipse at 50% 0%,#000 8%,transparent 76%);
+  -webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 8%,transparent 76%)}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* nav */
+header{position:sticky;top:0;z-index:60;backdrop-filter:blur(20px);
+  background:rgba(7,7,10,.5);border-bottom:1px solid transparent;transition:.35s}
+header.stuck{background:rgba(7,7,10,.94);border-bottom-color:var(--line)}
+.nav{display:flex;align-items:center;justify-content:space-between;gap:14px;height:72px}
+.brand{display:flex;align-items:center;gap:11px;font-size:12px;font-weight:600;letter-spacing:.26em}
+.brand b{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--gold);
+  color:var(--gold);font-size:12px;font-family:'Playfair Display',serif;font-weight:700}
+.brand b{animation:bp 4s ease-in-out infinite}
+@keyframes bp{50%{box-shadow:0 0 22px rgba(212,175,122,.4)}}
+.nl{display:none;gap:24px;font-size:12px;letter-spacing:.09em;color:var(--muted)}
+.nl a{position:relative;padding-block:5px;transition:color .25s}
+.nl a::after{content:"";position:absolute;left:0;bottom:0;height:1px;width:0;background:var(--gold);transition:width .3s var(--ease)}
+.nl a:hover,.nl a.on{color:var(--gold2)}
+.nl a:hover::after,.nl a.on::after{width:100%}
+.ncta{display:none}
+.burger{width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--line);
+  background:none;color:var(--gold);font-size:14px;cursor:pointer}
+#drawer{position:fixed;inset:72px 0 auto;z-index:59;background:rgba(7,7,10,.985);
+  border-bottom:1px solid var(--line);display:none;flex-direction:column;padding:10px 22px 22px;
+  backdrop-filter:blur(20px)}
+#drawer.open{display:flex}
+#drawer a{padding:14px 0;border-bottom:1px solid var(--line2);font-size:13px;letter-spacing:.1em;color:var(--muted)}
+#drawer a:hover{color:var(--gold2)}
+
+/* tombol */
+.btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  padding:13px 26px;font-size:12px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;
+  border:1px solid var(--gold);color:var(--gold);overflow:hidden;cursor:pointer;
+  transition:.3s var(--ease);white-space:nowrap;will-change:transform;background:none}
+.btn::before{content:"";position:absolute;inset:0;z-index:-1;
+  background:linear-gradient(135deg,var(--gold),var(--gold2));transform:translateY(101%);transition:transform .35s var(--ease)}
+.btn:hover{color:#0a0a0e;border-color:var(--gold2)}
+.btn:hover::before{transform:translateY(0)}
+.btn.solid{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a0a0e;border-color:transparent}
+.btn.solid::before{background:linear-gradient(135deg,var(--gold2),#fff8e8)}
+.btn.ghost{border-color:var(--line);color:var(--ink)}
+.btn.ghost:hover{color:#0a0a0e;border-color:var(--gold2)}
+
+/* tipografi */
+.kick{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.32em;
+  color:var(--gold);margin-bottom:18px;display:flex;align-items:center;gap:12px;text-transform:uppercase}
+.kick::before{content:"";width:30px;height:1px;background:var(--gold)}
+h1{font-family:'Playfair Display',serif;font-size:clamp(34px,7.2vw,66px);font-weight:400;
+  line-height:1.06;letter-spacing:-.02em;margin-bottom:22px}
+h1 em{font-style:italic;color:var(--gold2)}
+h2{font-family:'Playfair Display',serif;font-size:clamp(24px,4.6vw,38px);font-weight:400;
+  line-height:1.18;letter-spacing:-.015em;margin-bottom:16px}
+h3{font-size:15px;font-weight:600;letter-spacing:.02em;margin-bottom:9px}
+.lead{color:var(--muted);font-size:clamp(14px,2.3vw,16px);max-width:640px}
+.hr{height:1px;background:linear-gradient(90deg,var(--gold),transparent);margin:0 0 40px}
+
+/* hero */
+.hero{padding:76px 0 84px}
+.hero .lead{margin-bottom:34px}
+.hact{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:48px}
+.tags{display:flex;flex-wrap:wrap;gap:20px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
+.tags span{display:inline-flex;align-items:center;gap:7px}
+.tags i{color:var(--gold);font-size:10px}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line2);
+  border:1px solid var(--line2);margin-top:50px}
+.stat{background:#0a0a10;padding:24px 18px;transition:background .3s}
+.stat:hover{background:#10101a}
+.stat b{display:block;font-family:'Playfair Display',serif;font-size:clamp(22px,5vw,32px);color:var(--gold2)}
+.stat span{font-size:9.5px;letter-spacing:.19em;color:var(--dim);text-transform:uppercase}
+
+/* ruang */
+.rooms{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:1fr}
+.room{position:relative;display:block;background:#0a0a10;padding:26px 22px;overflow:hidden;
+  transition:.35s var(--ease)}
+.room::after{content:"";position:absolute;inset:0;opacity:0;transition:.35s;pointer-events:none;
+  background:radial-gradient(400px circle at var(--mx,50%) var(--my,50%),rgba(212,175,122,.14),transparent 70%)}
+.room:hover{background:#10101a}
+.room:hover::after{opacity:1}
+.room .no{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--gold);letter-spacing:.2em}
+.room h3{margin:12px 0 7px;transition:color .3s}
+.room:hover h3{color:var(--gold2)}
+.room p{font-size:12.4px;color:var(--muted)}
+.room .ar{position:absolute;right:20px;top:24px;font-size:11px;color:var(--dim);transition:.3s var(--ease)}
+.room:hover .ar{color:var(--gold);transform:translate(3px,-3px)}
+
+/* kartu umum */
+.grid{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:1fr}
+.cell{position:relative;background:#0a0a10;padding:28px 24px;overflow:hidden;transition:.35s var(--ease)}
+.cell::after{content:"";position:absolute;inset:0;opacity:0;transition:.35s;pointer-events:none;
+  background:radial-gradient(380px circle at var(--mx,50%) var(--my,50%),rgba(212,175,122,.13),transparent 70%)}
+.cell:hover::after{opacity:1}
+.cell .ic{width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--line);
+  color:var(--gold);font-size:15px;margin-bottom:18px;transition:.35s var(--ease)}
+.cell:hover .ic{border-color:var(--gold);transform:translateY(-3px)}
+.cell p{font-size:12.8px;color:var(--muted)}
+.cell .from{display:inline-block;margin-top:16px;font-family:'JetBrains Mono',monospace;
+  font-size:11px;color:var(--gold);letter-spacing:.08em}
+
+/* harga */
+.plans{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:1fr}
+.plan{display:flex;flex-direction:column;background:#0a0a10;padding:30px 24px;position:relative;transition:.35s}
+.plan:hover{background:#10101a}
+.plan.hot{background:linear-gradient(175deg,rgba(212,175,122,.11),#0a0a10 45%)}
+.plan .tag{position:absolute;top:0;right:0;padding:5px 12px;background:var(--gold);color:#0a0a0e;
+  font-size:8.5px;font-weight:700;letter-spacing:.16em}
+.plan h3{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+.price{font-family:'Playfair Display',serif;font-size:clamp(25px,5.2vw,32px);color:var(--gold2);line-height:1.1}
+.price small{display:block;font-family:'Sora',sans-serif;font-size:10px;color:var(--dim);letter-spacing:.1em;margin-top:6px}
+.eta{display:inline-flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;
+  font-size:10px;color:var(--gold);border:1px solid var(--line);padding:4px 10px;margin:16px 0 0;letter-spacing:.08em}
+.plan ul{list-style:none;margin:20px 0 24px;display:grid;gap:10px;font-size:12.5px;color:#b3afa6}
+.plan li{display:flex;gap:9px}
+.plan li i{color:var(--gold);font-size:10px;margin-top:6px}
+.plan li.off{color:var(--dim)}
+.plan li.off i{color:#3a3730}
+.plan .btn{width:100%;margin-top:auto}
+
+/* tabel */
+.tbl{width:100%;border-collapse:collapse;font-size:12.6px;border:1px solid var(--line2)}
+.tbl th,.tbl td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--line2)}
+.tbl th{font-size:9.5px;letter-spacing:.17em;text-transform:uppercase;color:var(--gold);
+  background:#0d0d14;font-weight:600}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td{color:#b3afa6}
+.tbl td:first-child{color:var(--ink)}
+.sev{display:inline-block;padding:2px 9px;font-size:9.5px;letter-spacing:.12em;border:1px solid}
+.sev.c{color:#ff8f8f;border-color:rgba(255,143,143,.4);background:rgba(255,143,143,.08)}
+.sev.h{color:#ffc27a;border-color:rgba(255,194,122,.4);background:rgba(255,194,122,.08)}
+.sev.m{color:#ffe08a;border-color:rgba(255,224,138,.35);background:rgba(255,224,138,.07)}
+.sev.l{color:#9fe0b0;border-color:rgba(159,224,176,.35);background:rgba(159,224,176,.07)}
+
+/* proses */
+.steps{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:1fr;counter-reset:s}
+.step{position:relative;background:#0a0a10;padding:26px 22px 26px 64px;transition:.3s}
+.step:hover{background:#10101a}
+.step::before{counter-increment:s;content:"0" counter(s);position:absolute;left:22px;top:26px;
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--gold);letter-spacing:.1em}
+.step p{font-size:12.6px;color:var(--muted)}
+
+/* skill */
+.skills{display:grid;gap:22px;grid-template-columns:1fr}
+.skill .top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:9px;letter-spacing:.05em}
+.skill .top b{font-family:'JetBrains Mono',monospace;color:var(--gold);font-weight:400}
+.bar{height:2px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold2));transition:width 1.4s var(--ease)}
+
+/* kutipan */
+.quotes{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:1fr}
+.quote{background:#0a0a10;padding:28px 24px}
+.quote .st{color:var(--gold);font-size:10px;letter-spacing:3px;margin-bottom:14px}
+.quote p{font-family:'Playfair Display',serif;font-size:15px;font-style:italic;color:#ddd8ce;margin-bottom:18px;line-height:1.6}
+.who{display:flex;align-items:center;gap:11px}
+.who .av{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--line);
+  color:var(--gold);font-size:11px;font-family:'Playfair Display',serif}
+.who b{display:block;font-size:12px}
+.who span{font-size:10.5px;color:var(--dim)}
+
+/* akordeon */
+details{border:1px solid var(--line2);background:#0a0a10;margin-bottom:1px;overflow:hidden;transition:border-color .25s}
+details[open]{border-color:var(--line)}
+summary{padding:18px 22px;cursor:pointer;font-size:13.4px;list-style:none;display:flex;
+  justify-content:space-between;gap:16px;align-items:center;letter-spacing:.01em}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font-family:'JetBrains Mono',monospace;color:var(--gold);font-size:16px;transition:transform .3s var(--ease)}
+details[open] summary::after{transform:rotate(45deg)}
+.bd{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s var(--ease)}
+details[open] .bd{grid-template-rows:1fr}
+.bd>div{overflow:hidden}
+.bd p{padding:0 22px 20px;font-size:12.8px;color:var(--muted)}
+
+/* CTA */
+.cta{border:1px solid var(--line);padding:clamp(36px,6vw,64px) clamp(24px,5vw,54px);
+  text-align:center;background:linear-gradient(160deg,rgba(212,175,122,.1),#0a0a10 62%);position:relative;overflow:hidden}
+.cta::after{content:"";position:absolute;inset:-50%;pointer-events:none;
+  background:conic-gradient(from 0deg,transparent,rgba(212,175,122,.12),transparent 38%);animation:sp 11s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.cta>*{position:relative;z-index:1}
+.cta p{color:var(--muted);max-width:520px;margin:0 auto 30px;font-size:13.5px}
+.cta .row{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+
+/* kontak */
+.cgrid{display:grid;gap:1px;background:var(--line2);border:1px solid var(--line2);grid-template-columns:repeat(2,1fr)}
+.clink{display:flex;align-items:center;gap:11px;padding:17px 18px;background:#0a0a10;font-size:12.4px;transition:.25s}
+.clink:hover{background:#10101a;color:var(--gold2)}
+.clink i{color:var(--gold);font-size:13px;width:16px}
+
+footer{border-top:1px solid var(--line2);padding:40px 0 50px;margin-top:50px}
+.fg{display:flex;flex-wrap:wrap;gap:20px;justify-content:space-between;font-size:11px;color:var(--dim)}
+
+.fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:70;
+  width:50px;height:50px;border-radius:50%;display:grid;place-items:center;font-size:20px;
+  background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a0a0e;
+  box-shadow:0 14px 36px -12px rgba(212,175,122,.7);transition:.25s var(--ease)}
+.fab:hover{transform:scale(1.08)}
+#top{position:fixed;left:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:70;
+  width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-size:12px;
+  border:1px solid var(--line);background:rgba(10,10,16,.9);color:var(--muted);
+  opacity:0;pointer-events:none;transition:.3s}
+#top.on{opacity:1;pointer-events:auto}
+#top:hover{color:var(--gold);border-color:var(--gold)}
+
+/* reveal */
+.rv{opacity:0;transform:translateY(22px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+.rv.on{opacity:1;transform:none}
+.pghead{padding:56px 0 40px}
+.pghead .lead{margin-top:4px}
+
+@media(min-width:640px){
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .rooms,.grid,.quotes{grid-template-columns:repeat(2,1fr)}
+  .skills,.cgrid{grid-template-columns:repeat(2,1fr)}
+  .steps{grid-template-columns:repeat(2,1fr)}
+}
+@media(min-width:960px){
+  .nl,.ncta{display:flex}
+  .burger{display:none}
+  .rooms{grid-template-columns:repeat(5,1fr)}
+  .grid{grid-template-columns:repeat(3,1fr)}
+  .plans{grid-template-columns:repeat(3,1fr)}
+  .quotes{grid-template-columns:repeat(3,1fr)}
+  .steps{grid-template-columns:repeat(4,1fr)}
+  .skills{grid-template-columns:repeat(2,1fr)}
+  .cgrid{grid-template-columns:repeat(4,1fr)}
+  .hero{padding:96px 0 100px}
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+  .rv{opacity:1;transform:none}
+}
+"""
+
+JS = r"""
+(function(){
+  var reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  var prog=document.getElementById('prog'), hdr=document.getElementById('hdr'), top=document.getElementById('top'), raf=0;
+  addEventListener('scroll',function(){
+    if(raf) return;
+    raf=requestAnimationFrame(function(){
+      var h=document.documentElement.scrollHeight-innerHeight;
+      prog.style.width=(h>0?(scrollY/h)*100:0)+'%';
+      hdr.classList.toggle('stuck', scrollY>12);
+      top.classList.toggle('on', scrollY>640);
+      if(!reduce) document.querySelectorAll('.orb').forEach(function(o){
+        o.style.transform='translateY('+scrollY*parseFloat(o.dataset.px||0)+'px)';
+      });
+      raf=0;
+    });
+  },{passive:true});
+  top.addEventListener('click',function(){scrollTo({top:0,behavior:'smooth'})});
+
+  var bg=document.getElementById('burger'), dr=document.getElementById('drawer');
+  if(bg) bg.addEventListener('click',function(){dr.classList.toggle('open')});
+
+  if(matchMedia('(pointer:fine)').matches && !reduce){
+    var cur=document.getElementById('cur'), cx=innerWidth/2, cy=innerHeight/2, tx=cx, ty=cy;
+    addEventListener('pointermove',function(e){tx=e.clientX;ty=e.clientY},{passive:true});
+    (function f(){cx+=(tx-cx)*.12;cy+=(ty-cy)*.12;cur.style.left=cx+'px';cur.style.top=cy+'px';requestAnimationFrame(f)})();
+    document.querySelectorAll('.btn').forEach(function(b){
+      b.addEventListener('pointermove',function(e){
+        var r=b.getBoundingClientRect();
+        b.style.transform='translate('+((e.clientX-r.left-r.width/2)/r.width)*5+'px,'+((e.clientY-r.top-r.height/2)/r.height)*4+'px)';
+      });
+      b.addEventListener('pointerleave',function(){b.style.transform=''});
+    });
+  }
+
+  document.querySelectorAll('.cell,.room').forEach(function(el){
+    el.addEventListener('pointermove',function(e){
+      var r=el.getBoundingClientRect();
+      el.style.setProperty('--mx',(e.clientX-r.left)+'px');
+      el.style.setProperty('--my',(e.clientY-r.top)+'px');
+    },{passive:true});
+  });
+
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting) return;
+      e.target.classList.add('on');
+      var b=e.target.querySelector&&e.target.querySelector('b[data-c]');
+      if(b && !b.dataset.done){
+        b.dataset.done=1;
+        var end=+b.dataset.c, pre=b.dataset.p||'', suf=b.dataset.s||'', t0=null;
+        (function step(ts){
+          if(!t0) t0=ts;
+          var p=Math.min(1,(ts-t0)/1300);
+          b.textContent=pre+Math.floor(end*(1-Math.pow(1-p,3)))+suf;
+          if(p<1) requestAnimationFrame(step); else b.textContent=pre+end+suf;
+        })(performance.now());
+      }
+      e.target.querySelectorAll&&e.target.querySelectorAll('.bar i').forEach(function(x){x.style.width=x.dataset.w+'%'});
+      io.unobserve(e.target);
+    });
+  },{threshold:.15,rootMargin:'0px 0px -40px'});
+  document.querySelectorAll('.rv').forEach(function(el){io.observe(el)});
+
+  var ds=document.querySelectorAll('details');
+  ds.forEach(function(d){d.addEventListener('toggle',function(){if(d.open)ds.forEach(function(o){if(o!==d)o.close()})})});
+})();
+"""
+
+ROOMS = [
+    ("/", "01", "Beranda", "Ikhtisar atelier dan pintu masuk ke seluruh ruang."),
+    ("/layanan", "02", "Layanan", "Tujuh disiplin kerja yang ditangani."),
+    ("/harga", "03", "Harga", "Paket web dan mobile dengan tarif terbuka."),
+    ("/portofolio", "04", "Portofolio", "Enam studi kasus beserta hasil terukurnya."),
+    ("/proses", "05", "Proses", "Alur kerja empat tahap yang bisa dipantau."),
+    ("/stack", "06", "Stack", "Perangkat, bahasa, dan tingkat penguasaan."),
+    ("/keamanan", "07", "Keamanan", "Kerentanan yang ditangani dan cara pengerasan."),
+    ("/sla", "08", "Ketentuan", "Garansi, revisi, pembayaran, dan kepemilikan."),
+    ("/faq", "09", "Tanya", "Keberatan yang paling sering muncul."),
+    ("/kontak", "10", "Kontak", "Kanal resmi dan formulir brief."),
+]
+
+def nav(active):
+    links = "".join(
+        '<a href="%s"%s>%s</a>' % (u, ' class="on"' if u == active else "", t)
+        for u, _n, t, _d in ROOMS
+    )
+    dl = "".join('<a href="%s">%s — %s</a>' % (u, n, t) for u, n, t, _d in ROOMS)
+    return """
+<header id="hdr"><div class="wrap nav">
+  <a href="/" class="brand"><b>A</b>ALFILIATOR</a>
+  <nav class="nl">%s</nav>
+  <a href="%s?text=Halo%%2C%%20saya%%20mau%%20konsultasi" class="btn ncta" target="_blank" rel="noopener">Konsultasi</a>
+  <button class="burger" id="burger" aria-label="Menu"><i class="fas fa-bars"></i></button>
+</div></header>
+<div id="drawer">%s</div>""" % (links, WA, dl)
+
+def shell(active, title, desc, body):
+    return """<!DOCTYPE html>
+<html lang="id"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#07070a">
+<title>%s — ALFILIATOR</title>
+<meta name="description" content="%s">
+<meta property="og:title" content="%s — ALFILIATOR">
+<meta property="og:description" content="%s">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Sora:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>%s</style>
+</head><body>
+<div id="prog"></div><div id="cur"></div>
+<div class="bgfx"><div class="orb o1" data-px=".10"></div><div class="orb o2" data-px="-.13"></div><div class="orb o3" data-px=".07"></div><div class="mesh"></div></div>
+<div class="grain"></div>
+%s
+<main>%s</main>
+<footer><div class="wrap fg">
+  <div>&copy; 2026 ALFILIATOR — Atelier Digital</div>
+  <div class="mono">NODE v4 · 10 RUANG</div>
+</div></footer>
+<a class="fab" href="%s?text=Halo%%20ALFILIATOR" target="_blank" rel="noopener" aria-label="WhatsApp"><i class="fab fa-whatsapp"></i></a>
+<button id="top" aria-label="Atas"><i class="fas fa-arrow-up"></i></button>
+<script>%s</script>
+</body></html>""" % (html.escape(title), html.escape(desc), html.escape(title), html.escape(desc), CSS, nav(active), body, WA, JS)
+
+# ---------------------------------------------------------------- halaman
+HOME = """
+<div class="wrap hero">
+  <div class="kick">Atelier Digital · Est. 2021</div>
+  <h1>Perangkat lunak yang dibuat <em>seperti benda mahal</em>.</h1>
+  <p class="lead">Web, Android, iOS, sistem internal, dan bot automation. Dikerjakan dengan disiplin atelier: brief tertulis, timeline jujur, source code diserahkan, dan keamanan dihitung sejak baris pertama.</p>
+  <div class="hact">
+    <a href="/kontak" class="btn solid">Kirim Brief</a>
+    <a href="/harga" class="btn ghost">Lihat Tarif</a>
+  </div>
+  <div class="tags">
+    <span><i class="fas fa-check"></i> Garansi bug 30 hari</span>
+    <span><i class="fas fa-check"></i> Source code milik Anda</span>
+    <span><i class="fas fa-check"></i> NDA tersedia</span>
+    <span><i class="fas fa-check"></i> Timeline tertulis</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><b data-c="128" data-s="+">0</b><span>Proyek Selesai</span></div>
+    <div class="stat"><b data-c="96" data-s="%">0</b><span>Klien Kembali</span></div>
+    <div class="stat"><b data-c="99" data-s=".9%">0</b><span>Uptime</span></div>
+    <div class="stat"><b data-c="2" data-p="&lt;" data-s=" jam">0</b><span>Respon</span></div>
+  </div>
+</div>
+
+<section><div class="wrap">
+  <div class="kick rv">Sepuluh Ruang</div>
+  <h2 class="rv">Jelajahi seluruh atelier</h2>
+  <div class="hr rv"></div>
+  <div class="rooms rv">
+""" + "".join(
+    '<a class="room" href="%s"><span class="no">%s</span><span class="ar"><i class="fas fa-arrow-up-right-from-square"></i></span><h3>%s</h3><p>%s</p></a>' % (u, n, t, d)
+    for u, n, t, d in ROOMS
+) + """
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="kick rv">Mengapa</div>
+  <h2 class="rv">Tiga hal yang jarang ditemukan</h2>
+  <div class="hr rv"></div>
+  <div class="grid rv">
+    <div class="cell"><div class="ic"><i class="fas fa-file-signature"></i></div><h3>Brief tertulis</h3><p>Lingkup kerja, tanggal, dan batas revisi dikunci di awal. Tidak ada "nanti ditambah".</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-shield-halved"></i></div><h3>Keamanan sejak awal</h3><p>Validasi input, header, dan pembatasan akses masuk ke spesifikasi — bukan tambahan belakangan.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-key"></i></div><h3>Tanpa penguncian</h3><p>Source code dan kredensial diserahkan penuh setelah pelunasan. Anda tidak tersandera.</p></div>
+  </div>
+</div></section>
+
+<section><div class="wrap"><div class="cta rv">
+  <div class="kick" style="justify-content:center">Mulai</div>
+  <h2>Ceritakan proyek Anda</h2>
+  <p>Konsultasi awal tanpa biaya. Balasan berisi estimasi biaya, durasi, dan cakupan yang bisa langsung Anda nilai.</p>
+  <div class="row"><a href="%s?text=Halo" class="btn solid" target="_blank" rel="noopener">WhatsApp</a><a href="/kontak" class="btn ghost">Formulir</a></div>
+</div></div></section>
+""" % WA
+
+LAYANAN = """
+<div class="wrap pghead">
+  <div class="kick">02 · Layanan</div>
+  <h1>Tujuh disiplin <em>yang ditangani</em>.</h1>
+  <p class="lead">Setiap pekerjaan punya batas cakupan tertulis. Harga di bawah adalah titik mulai; spesifikasi akhir menyesuaikan kompleksitas.</p>
+</div>
+<section><div class="wrap"><div class="grid">
+  <div class="cell rv"><div class="ic"><i class="fas fa-window-maximize"></i></div><h3>Landing Page</h3><p>Halaman promosi fokus untuk iklan berbayar dan closing cepat.</p><span class="from">mulai Rp 850.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-building"></i></div><h3>Company Profile</h3><p>Profil bisnis profesional, katalog layanan, formulir lead.</p><span class="from">mulai Rp 2.400.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-cart-shopping"></i></div><h3>Toko Online</h3><p>Katalog, keranjang, checkout, integrasi payment gateway.</p><span class="from">mulai Rp 4.500.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-diagram-project"></i></div><h3>Sistem Custom</h3><p>Dashboard, multi-peran, laporan, dan API internal.</p><span class="from">mulai Rp 9.500.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-mobile-screen-button"></i></div><h3>Aplikasi Mobile</h3><p>Android dan iOS, native maupun cross-platform.</p><span class="from">mulai Rp 6.500.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fab fa-telegram"></i></div><h3>Bot &amp; Automation</h3><p>WhatsApp/Telegram, auto-reply, notifikasi, sinkronisasi.</p><span class="from">mulai Rp 1.750.000</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-shield-halved"></i></div><h3>Security Audit</h3><p>Pemindaian celah, pengerasan server, laporan prioritas.</p><span class="from">mulai Rp 2.500.000</span></div>
+</div></div></section>
+<section><div class="wrap"><div class="cta rv">
+  <h2>Butuh kombinasi?</h2><p>Banyak proyek menggabungkan web dan bot sekaligus. Sebutkan semuanya, saya susun satu penawaran utuh.</p>
+  <div class="row"><a href="%s?text=Halo%%2C%%20saya%%20butuh%%20kombinasi%%20layanan" class="btn solid" target="_blank" rel="noopener">Diskusikan</a><a href="/harga" class="btn ghost">Lihat Tarif</a></div>
+</div></div></section>
+""" % WA
+
+HARGA = """
+<div class="wrap pghead">
+  <div class="kick">03 · Tarif</div>
+  <h1>Harga terbuka, <em>durasi jujur</em>.</h1>
+  <p class="lead">Estimasi sudah memuat desain, revisi terjadwal, dan pengujian. Pembayaran 50% di awal, 50% saat serah terima.</p>
+</div>
+<section><div class="wrap">
+  <h3 class="rv" style="letter-spacing:.2em;font-size:11px;color:var(--gold);text-transform:uppercase;margin-bottom:14px">Web</h3>
+  <div class="plans rv">
+    <div class="plan"><h3>Starter</h3><div class="price">Rp 850.000<small>sekali bayar</small></div><div class="eta"><i class="far fa-clock"></i> 4–6 hari</div>
+      <ul><li><i class="fas fa-check"></i>1 halaman</li><li><i class="fas fa-check"></i>Responsif</li><li><i class="fas fa-check"></i>Form kontak</li><li><i class="fas fa-check"></i>SEO dasar</li><li><i class="fas fa-check"></i>1x revisi</li><li class="off"><i class="fas fa-minus"></i>CMS</li></ul>
+      <a href="%s?text=Paket%%20Starter" class="btn ghost" target="_blank" rel="noopener">Ambil</a></div>
+    <div class="plan hot"><span class="tag">DIMINATI</span><h3>Bisnis</h3><div class="price">Rp 3.500.000<small>sekali bayar</small></div><div class="eta"><i class="far fa-clock"></i> 12–18 hari</div>
+      <ul><li><i class="fas fa-check"></i>8 halaman</li><li><i class="fas fa-check"></i>Desain custom</li><li><i class="fas fa-check"></i>CMS</li><li><i class="fas fa-check"></i>Hosting + SSL</li><li><i class="fas fa-check"></i>Analytics</li><li><i class="fas fa-check"></i>2x revisi</li></ul>
+      <a href="%s?text=Paket%%20Bisnis" class="btn solid" target="_blank" rel="noopener">Ambil</a></div>
+    <div class="plan"><h3>Enterprise</h3><div class="price">Rp 9.500.000<small>mulai dari</small></div><div class="eta"><i class="far fa-clock"></i> 30–45 hari</div>
+      <ul><li><i class="fas fa-check"></i>Sistem custom</li><li><i class="fas fa-check"></i>Multi-peran</li><li><i class="fas fa-check"></i>API internal</li><li><i class="fas fa-check"></i>Dashboard</li><li><i class="fas fa-check"></i>Deploy VPS</li><li><i class="fas fa-check"></i>Garansi 60 hari</li></ul>
+      <a href="%s?text=Paket%%20Enterprise" class="btn ghost" target="_blank" rel="noopener">Ambil</a></div>
+  </div>
+</div></section>
+<section><div class="wrap">
+  <h3 class="rv" style="letter-spacing:.2em;font-size:11px;color:var(--gold);text-transform:uppercase;margin-bottom:14px">Mobile — Android &amp; iOS dibedakan</h3>
+  <div class="plans rv">
+    <div class="plan"><h3>Android</h3><div class="price">Rp 6.500.000<small>mulai dari</small></div><div class="eta"><i class="far fa-clock"></i> 21–28 hari</div>
+      <ul><li><i class="fas fa-check"></i>Kotlin / Flutter</li><li><i class="fas fa-check"></i>UI custom</li><li><i class="fas fa-check"></i>Integrasi API</li><li><i class="fas fa-check"></i>Build + signing</li><li><i class="fas fa-check"></i>Pendampingan Play Store</li></ul>
+      <a href="%s?text=Aplikasi%%20Android" class="btn ghost" target="_blank" rel="noopener">Ambil</a></div>
+    <div class="plan"><h3>iPhone / iOS</h3><div class="price">Rp 12.000.000<small>mulai dari</small></div><div class="eta"><i class="far fa-clock"></i> 30–40 hari</div>
+      <ul><li><i class="fas fa-check"></i>Swift / Flutter</li><li><i class="fas fa-check"></i>UI sesuai HIG</li><li><i class="fas fa-check"></i>Integrasi API</li><li><i class="fas fa-check"></i>TestFlight</li><li><i class="fas fa-check"></i>Pendampingan App Store</li></ul>
+      <a href="%s?text=Aplikasi%%20iOS" class="btn ghost" target="_blank" rel="noopener">Ambil</a></div>
+    <div class="plan"><h3>Cross-Platform</h3><div class="price">Rp 18.000.000<small>mulai dari</small></div><div class="eta"><i class="far fa-clock"></i> 40–55 hari</div>
+      <ul><li><i class="fas fa-check"></i>Satu basis Flutter</li><li><i class="fas fa-check"></i>Dua build</li><li><i class="fas fa-check"></i>Desain adaptif</li><li><i class="fas fa-check"></i>Dua store</li><li><i class="fas fa-check"></i>Garansi 45 hari</li></ul>
+      <a href="%s?text=Cross-platform" class="btn solid" target="_blank" rel="noopener">Ambil</a></div>
+  </div>
+  <table class="tbl rv" style="margin-top:26px">
+    <tr><th>Tambahan</th><th>Tarif</th></tr>
+    <tr><td>Bot WhatsApp / Telegram</td><td>Rp 1.750.000</td></tr>
+    <tr><td>Audit keamanan + pengerasan</td><td>Rp 2.500.000</td></tr>
+    <tr><td>Payment gateway</td><td>Rp 1.250.000</td></tr>
+    <tr><td>Desain UI/UX Figma</td><td>Rp 1.500.000</td></tr>
+    <tr><td>SEO lanjutan</td><td>Rp 1.000.000</td></tr>
+    <tr><td>Maintenance bulanan</td><td>Rp 400.000</td></tr>
+  </table>
+  <p class="rv" style="margin-top:18px;font-size:12px;color:var(--dim);border-left:1px solid var(--gold);padding-left:16px">
+    Di luar paket: Play Console $25 sekali, Apple Developer $99/tahun, domain &amp; hosting untuk paket Starter. Fitur berat (peta, realtime, chat, offline sync) dihitung terpisah.
+  </p>
+</div></section>
+""" % (WA, WA, WA, WA, WA, WA)
+
+PORTO = """
+<div class="wrap pghead">
+  <div class="kick">04 · Portofolio</div>
+  <h1>Enam pekerjaan, <em>enam hasil terukur</em>.</h1>
+  <p class="lead">Nama klien disamarkan sesuai perjanjian. Metrik diambil dari data yang diberikan klien setelah peluncuran.</p>
+</div>
+<section><div class="wrap"><div class="grid">
+  <div class="cell rv"><div class="ic"><i class="fas fa-store"></i></div><h3>Retail Fashion</h3><p>Toko online + integrasi kurir. Waktu muat 1,4 detik, checkout tiga langkah.</p><span class="from">+38% konversi</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-notes-medical"></i></div><h3>Klinik Estetika</h3><p>Sistem booking + bot pengingat. Admin terbebas dari 40 panggilan per hari.</p><span class="from">−2 jam kerja/hari</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-truck-fast"></i></div><h3>Logistik Regional</h3><p>Dashboard armada dan resi. Rekap harian otomatis menggantikan spreadsheet.</p><span class="from">±600 resi/hari</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-utensils"></i></div><h3>Jaringan Restoran</h3><p>Menu digital multi-cabang dengan stok tersinkron dan pesanan langsung.</p><span class="from">7 cabang</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-graduation-cap"></i></div><h3>Lembaga Kursus</h3><p>Aplikasi Android materi dan kuis. Ulasan Play Store rata-rata 4,7.</p><span class="from">4,7 ★</span></div>
+  <div class="cell rv"><div class="ic"><i class="fas fa-shield-halved"></i></div><h3>Audit Koperasi</h3><p>Pengerasan server setelah insiden. 23 temuan ditutup, tanpa downtime.</p><span class="from">23 celah ditutup</span></div>
+</div></div></section>
+<section><div class="wrap"><div class="quotes rv">
+  <div class="quote"><div class="st">★★★★★</div><p>"Selesai sesuai tanggal yang ditulis di awal. Komunikasi rapi, revisi cepat."</p><div class="who"><div class="av">R</div><div><b>Rizky A.</b><span>Retail</span></div></div></div>
+  <div class="quote"><div class="st">★★★★★</div><p>"Sistem yang dulu di Excel sekarang multi-pengguna dan rapi."</p><div class="who"><div class="av">D</div><div><b>Dewi P.</b><span>Operasional</span></div></div></div>
+  <div class="quote"><div class="st">★★★★★</div><p>"Dokumentasi dan serah terima lengkap. Tidak ada yang disembunyikan."</p><div class="who"><div class="av">F</div><div><b>Fajar S.</b><span>Klinik</span></div></div></div>
+</div></div></section>
+"""
+
+PROSES = """
+<div class="wrap pghead">
+  <div class="kick">05 · Proses</div>
+  <h1>Empat tahap, <em>semuanya terlihat</em>.</h1>
+  <p class="lead">Anda tahu posisi proyek di setiap tahap. Setiap tahap punya keluaran yang harus disetujui sebelum lanjut.</p>
+</div>
+<section><div class="wrap"><div class="steps">
+  <div class="step rv"><h3>Brief</h3><p>Tujuan bisnis, pengguna sasaran, referensi visual, dan batasan teknis dipetakan jadi dokumen.</p></div>
+  <div class="step rv"><h3>Desain</h3><p>Mockup dikirim untuk direview. Kode belum ditulis sampai Anda menyetujui arah visual.</p></div>
+  <div class="step rv"><h3>Development</h3><p>Pengerjaan bertahap dengan tautan preview yang bisa Anda pantau kapan pun.</p></div>
+  <div class="step rv"><h3>Peluncuran</h3><p>Deploy, serah terima kode dan kredensial, pelatihan singkat, lalu masa garansi berjalan.</p></div>
+</div></div></section>
+<section><div class="wrap">
+  <h2 class="rv">Yang perlu Anda siapkan</h2><div class="hr rv"></div>
+  <table class="tbl rv">
+    <tr><th>Tahap</th><th>Materi dari Anda</th></tr>
+    <tr><td>Brief</td><td>Tujuan, contoh situs/aplikasi acuan, daftar fitur wajib</td></tr>
+    <tr><td>Desain</td><td>Logo, palet warna, foto produk, naskah teks</td></tr>
+    <tr><td>Development</td><td>Akses domain/hosting, kunci API, akun uji</td></tr>
+    <tr><td>Peluncuran</td><td>Persetujuan akhir dan pelunasan</td></tr>
+  </table>
+</div></section>
+"""
+
+STACK = """
+<div class="wrap pghead">
+  <div class="kick">06 · Stack</div>
+  <h1>Perangkat dan <em>tingkat penguasaan</em>.</h1>
+  <p class="lead">Angka di bawah penilaian jujur, bukan klaim. Yang di bawah 80% saya kerjakan dengan pendampingan riset tambahan.</p>
+</div>
+<section><div class="wrap"><div class="skills">
+  <div class="skill rv"><div class="top"><span>Python &amp; Automation</span><b>95%</b></div><div class="bar"><i data-w="95"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Linux / Pengerasan VPS</span><b>93%</b></div><div class="bar"><i data-w="93"></i></div></div>
+  <div class="skill rv"><div class="top"><span>JavaScript / Node.js</span><b>90%</b></div><div class="bar"><i data-w="90"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Cyber Security</span><b>89%</b></div><div class="bar"><i data-w="89"></i></div></div>
+  <div class="skill rv"><div class="top"><span>PHP / Laravel</span><b>88%</b></div><div class="bar"><i data-w="88"></i></div></div>
+  <div class="skill rv"><div class="top"><span>MySQL / PostgreSQL</span><b>87%</b></div><div class="bar"><i data-w="87"></i></div></div>
+  <div class="skill rv"><div class="top"><span>UI/UX Design</span><b>86%</b></div><div class="bar"><i data-w="86"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Flutter / Dart</span><b>85%</b></div><div class="bar"><i data-w="85"></i></div></div>
+  <div class="skill rv"><div class="top"><span>React / Next.js</span><b>84%</b></div><div class="bar"><i data-w="84"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Kotlin (Android)</span><b>82%</b></div><div class="bar"><i data-w="82"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Swift (iOS)</span><b>78%</b></div><div class="bar"><i data-w="78"></i></div></div>
+  <div class="skill rv"><div class="top"><span>Docker / CI</span><b>76%</b></div><div class="bar"><i data-w="76"></i></div></div>
+</div></div></section>
+<section><div class="wrap">
+  <h2 class="rv">Alat kerja</h2><div class="hr rv"></div>
+  <div class="grid rv">
+    <div class="cell"><h3>Editor</h3><p>VS Code, Neovim, Android Studio, Xcode.</p></div>
+    <div class="cell"><h3>Desain</h3><p>Figma, Penpot, Aseprite.</p></div>
+    <div class="cell"><h3>Infrastruktur</h3><p>Nginx, Caddy, systemd, Docker, Cloudflare.</p></div>
+  </div>
+</div></section>
+"""
+
+KEAMANAN = """
+<div class="wrap pghead">
+  <div class="kick">07 · Keamanan</div>
+  <h1>Kerentanan yang <em>ditangani lebih dulu</em>.</h1>
+  <p class="lead">Keamanan bukan tambahan di akhir. Kategori di bawah masuk ke daftar periksa setiap proyek, dan bisa diuji terpisah lewat audit resmi.</p>
+</div>
+<section><div class="wrap">
+  <h2 class="rv">Cakupan audit</h2><div class="hr rv"></div>
+  <table class="tbl rv">
+    <tr><th>Kerentanan</th><th>Tingkat</th><th>Penanganan</th></tr>
+    <tr><td>SQL Injection</td><td><span class="sev c">KRITIS</span></td><td>Query berparameter, ORM, validasi tipe</td></tr>
+    <tr><td>Cross-Site Scripting</td><td><span class="sev c">KRITIS</span></td><td>Escaping keluaran, CSP ketat</td></tr>
+    <tr><td>Broken Authentication</td><td><span class="sev c">KRITIS</span></td><td>Hash argon2, batas percobaan, MFA opsional</td></tr>
+    <tr><td>IDOR / Akses Tak Sah</td><td><span class="sev h">TINGGI</span></td><td>Pemeriksaan kepemilikan per objek</td></tr>
+    <tr><td>CSRF</td><td><span class="sev h">TINGGI</span></td><td>Token per sesi, SameSite, verifikasi asal</td></tr>
+    <tr><td>File Upload Berbahaya</td><td><span class="sev h">TINGGI</span></td><td>Validasi MIME, batas ukuran, simpan di luar webroot</td></tr>
+    <tr><td>Rate Limit Longgar</td><td><span class="sev m">SEDANG</span></td><td>Pembatasan per IP dan per akun</td></tr>
+    <tr><td>Header Tidak Lengkap</td><td><span class="sev m">SEDANG</span></td><td>CSP, HSTS, X-Frame-Options, Permissions-Policy</td></tr>
+    <tr><td>Kredensial di Repo</td><td><span class="sev m">SEDANG</span></td><td>Variabel lingkungan, .gitignore, rotasi kunci</td></tr>
+    <tr><td>Banner Versi Bocor</td><td><span class="sev l">RENDAH</span></td><td>Samarkan header server</td></tr>
+    <tr><td>Direktori Terbuka</td><td><span class="sev l">RENDAH</span></td><td>Matikan listing, routing eksplisit</td></tr>
+  </table>
+</div></section>
+<section><div class="wrap">
+  <h2 class="rv">Pengerasan yang diterapkan</h2><div class="hr rv"></div>
+  <div class="grid rv">
+    <div class="cell"><div class="ic"><i class="fas fa-lock"></i></div><h3>TLS wajib</h3><p>HSTS aktif, hanya HTTPS, cipher modern.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-filter"></i></div><h3>Routing ketat</h3><p>Hanya jalur terdaftar yang dilayani, sisanya 404.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-gauge-high"></i></div><h3>Rate limit</h3><p>Pembatasan per IP untuk meredam banjir permintaan.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-user-shield"></i></div><h3>Hak minimum</h3><p>Proses jalan tanpa hak root, akses berkas dibatasi.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-rotate"></i></div><h3>Backup teruji</h3><p>Cadangan harian dan uji pemulihan berkala.</p></div>
+    <div class="cell"><div class="ic"><i class="fas fa-eye"></i></div><h3>Log terpantau</h3><p>Pencatatan akses dan peringatan anomali.</p></div>
+  </div>
+</div></section>
+<section><div class="wrap"><div class="cta rv">
+  <h2>Minta audit</h2><p>Audit berjalan 3–5 hari kerja dengan laporan bertingkat prioritas dan sesi penjelasan hasil.</p>
+  <div class="row"><a href="%s?text=Halo%%2C%%20saya%%20mau%%20audit%%20keamanan" class="btn solid" target="_blank" rel="noopener">Ajukan Audit</a><a href="/sla" class="btn ghost">Baca Ketentuan</a></div>
+</div></div></section>
+""" % WA
+
+SLA = """
+<div class="wrap pghead">
+  <div class="kick">08 · Ketentuan</div>
+  <h1>Aturan main yang <em>jelas di depan</em>.</h1>
+  <p class="lead">Ditulis supaya kedua pihak tenang. Semua poin masuk ke dokumen kerja sebelum proyek dimulai.</p>
+</div>
+<section><div class="wrap">
+  <table class="tbl rv">
+    <tr><th>Hal</th><th>Ketentuan</th></tr>
+    <tr><td>Pembayaran</td><td>50% tanda jadi, 50% sebelum serah terima. Transfer bank atau QRIS.</td></tr>
+    <tr><td>Revisi</td><td>Starter 1x, Bisnis 2x, paket mobile sesuai kontrak. Di luar cakupan dihitung per jam.</td></tr>
+    <tr><td>Garansi</td><td>30 hari (web dasar), 60 hari (Enterprise), 45 hari (cross-platform). Hanya untuk bug.</td></tr>
+    <tr><td>Kepemilikan</td><td>Seluruh kode dan aset menjadi milik klien setelah pelunasan.</td></tr>
+    <tr><td>Kerahasiaan</td><td>NDA tersedia atas permintaan, ditandatangani sebelum brief.</td></tr>
+    <tr><td>Pembatalan</td><td>Tanda jadi tidak dikembalikan bila desain sudah disetujui. Pekerjaan yang sudah jalan diserahkan.</td></tr>
+    <tr><td>Keterlambatan</td><td>Materi dari klien yang telat menunda tanggal tanpa dihitung sebagai kesalahan pengerja.</td></tr>
+    <tr><td>Percepatan</td><td>Tersedia dengan biaya prioritas, dihitung per hari yang dimajukan.</td></tr>
+    <tr><td>Batasan</td><td>Tidak mengerjakan proyek yang melanggar hukum atau menyalin karya pihak lain tanpa lisensi.</td></tr>
+  </table>
+</div></section>
+<section><div class="wrap">
+  <h2 class="rv">Setelah peluncuran</h2><div class="hr rv"></div>
+  <div class="grid rv">
+    <div class="cell"><h3>Hari 1–7</h3><p>Pemantauan error, penyesuaian kecil gratis.</p></div>
+    <div class="cell"><h3>Masa garansi</h3><p>Perbaikan bug dari sisi pengerjaan tanpa biaya.</p></div>
+    <div class="cell"><h3>Setelah garansi</h3><p>Maintenance bulanan Rp 400.000 mencakup backup, pembaruan, dan 2 jam kerja.</p></div>
+  </div>
+</div></section>
+"""
+
+FAQ = """
+<div class="wrap pghead">
+  <div class="kick">09 · Tanya</div>
+  <h1>Yang paling sering <em>ditanyakan</em>.</h1>
+  <p class="lead">Kalau jawabannya belum ada di sini, tanyakan langsung — tidak ada pertanyaan yang terlalu kecil.</p>
+</div>
+<section><div class="wrap">
+  <details class="rv"><summary>Berapa DP-nya?</summary><div class="bd"><div><p>50% tanda jadi, 50% sebelum serah terima. Tidak ada pelunasan di muka.</p></div></div></details>
+  <details class="rv"><summary>Kenapa iOS lebih mahal?</summary><div class="bd"><div><p>Apple Developer $99 per tahun, build wajib lewat Xcode, dan review App Store jauh lebih ketat serta memakan waktu. Biaya itu menutup jam kerja dan risiko penolakan.</p></div></div></details>
+  <details class="rv"><summary>Bisa lebih cepat?</summary><div class="bd"><div><p>Bisa dengan biaya prioritas. Estimasi normal sengaja dilonggarkan supaya tidak jadi janji kosong.</p></div></div></details>
+  <details class="rv"><summary>Source code jadi milik saya?</summary><div class="bd"><div><p>Ya, setelah pelunasan. Tanpa penguncian atau sewa lisensi.</p></div></div></details>
+  <details class="rv"><summary>Garansi mencakup apa?</summary><div class="bd"><div><p>Bug dan error dari sisi pengerjaan. Fitur baru di luar brief masuk pengembangan lanjutan.</p></div></div></details>
+  <details class="rv"><summary>Bisa NDA?</summary><div class="bd"><div><p>Bisa. Kirim draf Anda, atau saya siapkan versi sederhana untuk ditandatangani kedua pihak.</p></div></div></details>
+  <details class="rv"><summary>Termasuk hosting dan akun store?</summary><div class="bd"><div><p>Hosting dan SSL tahun pertama termasuk di paket Bisnis dan Enterprise. Akun Play Console dan Apple Developer dibuat atas nama Anda, biaya ditanggung klien.</p></div></div></details>
+  <details class="rv"><summary>Bagaimana kalau hasilnya tidak sesuai?</summary><div class="bd"><div><p>Ada tahap persetujuan desain sebelum kode ditulis. Ketidaksesuaian di tahap itu diselesaikan tanpa biaya tambahan.</p></div></div></details>
+</div></section>
+"""
+
+KONTAK = """
+<div class="wrap pghead">
+  <div class="kick">10 · Kontak</div>
+  <h1>Mari mulai <em>percakapan</em>.</h1>
+  <p class="lead">Konsultasi awal tanpa biaya. Balasan berisi estimasi biaya, durasi, dan cakupan yang bisa Anda nilai langsung.</p>
+</div>
+<section><div class="wrap">
+  <div class="cgrid rv">
+    <a class="clink" href="%s" target="_blank" rel="noopener"><i class="fab fa-whatsapp"></i> WhatsApp</a>
+    <a class="clink" href="https://t.me/WiteXCTbot" target="_blank" rel="noopener"><i class="fab fa-telegram-plane"></i> Telegram Bot</a>
+    <a class="clink" href="https://t.me/wof1NBI7ObBlNzE9" target="_blank" rel="noopener"><i class="fab fa-telegram"></i> Kanal</a>
+    <a class="clink" href="https://fastwork.id/user/alfiliaor_web" target="_blank" rel="noopener"><i class="fas fa-briefcase"></i> Fastwork</a>
+    <a class="clink" href="https://github.com/yuana448" target="_blank" rel="noopener"><i class="fab fa-github"></i> GitHub</a>
+    <a class="clink" href="https://web.facebook.com/zerinova112/" target="_blank" rel="noopener"><i class="fab fa-facebook-f"></i> Facebook</a>
+    <a class="clink" href="https://www.instagram.com/javanova666/" target="_blank" rel="noopener"><i class="fab fa-instagram"></i> Instagram</a>
+    <a class="clink" href="https://x.com/Leon63921453481" target="_blank" rel="noopener"><i class="fab fa-x-twitter"></i> Twitter / X</a>
+  </div>
+</div></section>
+<section><div class="wrap">
+  <h2 class="rv">Format brief yang cepat diproses</h2><div class="hr rv"></div>
+  <table class="tbl rv">
+    <tr><th>Poin</th><th>Contoh isian</th></tr>
+    <tr><td>Jenis</td><td>Toko online / aplikasi Android / sistem internal</td></tr>
+    <tr><td>Tujuan</td><td>Menambah penjualan daring, mengganti pencatatan manual</td></tr>
+    <tr><td>Fitur wajib</td><td>Login, katalog, keranjang, laporan penjualan</td></tr>
+    <tr><td>Target waktu</td><td>6 minggu, atau belum mendesak</td></tr>
+    <tr><td>Anggaran</td><td>Kisaran yang Anda siapkan</td></tr>
+  </table>
+  <div style="margin-top:26px"><a href="%s?text=Halo%%2C%%20ini%%20brief%%20saya%%3A" class="btn solid" target="_blank" rel="noopener">Kirim Brief via WhatsApp</a></div>
+</div></section>
+""" % (WA, WA)
+
+PAGES = {
+    "/": ("Beranda", "Atelier digital untuk web, Android, iOS, sistem custom, dan keamanan.", HOME),
+    "/layanan": ("Layanan", "Tujuh disiplin kerja: landing page, profil, toko, sistem, mobile, bot, audit.", LAYANAN),
+    "/harga": ("Harga", "Tarif web, Android, iOS, dan cross-platform beserta tambahan.", HARGA),
+    "/portofolio": ("Portofolio", "Enam studi kasus dengan hasil terukur.", PORTO),
+    "/proses": ("Proses", "Alur kerja empat tahap dengan keluaran yang disetujui.", PROSES),
+    "/stack": ("Stack", "Bahasa, perangkat, dan tingkat penguasaan.", STACK),
+    "/keamanan": ("Keamanan", "Kerentanan yang ditangani dan pengerasan yang diterapkan.", KEAMANAN),
+    "/sla": ("Ketentuan", "Pembayaran, revisi, garansi, kepemilikan, pembatalan.", SLA),
+    "/faq": ("Tanya", "Keberatan yang paling sering muncul.", FAQ),
+    "/kontak": ("Kontak", "Kanal resmi dan format brief.", KONTAK),
+}
+BUILT = {k: shell(k, v[0], v[1], v[2]) for k, v in PAGES.items()}
+
+ROBOTS = "User-agent: *\nAllow: /\nSitemap: %s/sitemap.xml\n" % BASE
+SITEMAP = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           + "".join("<url><loc>%s%s</loc></url>" % (BASE, u) for u in PAGES)
+           + "</urlset>")
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "AlfiliatorAtelier/4.0"
+    sys_version = ""
+
+    def _rl(self):
+        ip = self.client_address[0]
+        now = time.time()
+        q = _hits[ip]
+        while q and now - q[0] > RATE_WINDOW:
+            q.popleft()
+        if len(q) >= RATE_LIMIT:
+            return False
+        q.append(now)
+        return True
+
+    def _send(self, code, body, ctype="text/html; charset=utf-8", extra=None):
+        data = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Content-Security-Policy",
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+            "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+            "img-src 'self' data: https:; "
+            "script-src 'self' 'unsafe-inline'; "
+            "form-action 'self'; base-uri 'self'; frame-ancestors 'self'")
+        if extra:
+            for k, v in extra.items():
+                self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def do_GET(self):
+        if not self._rl():
+            self._send(429, "<h1 style='font-family:monospace;color:#d4af7a;background:#07070a;padding:44px'>429 // TERLALU BANYAK PERMINTAAN</h1>",
+                       extra={"Retry-After": str(RATE_WINDOW)})
+            return
+        path = self.path.split("?")[0].rstrip("/") or "/"
+        if path in BUILT:
+            self._send(200, BUILT[path])
+        elif path == "/health":
+            self._send(200, '{"status":"online","rooms":10}', "application/json")
+        elif path == "/robots.txt":
+            self._send(200, ROBOTS, "text/plain; charset=utf-8")
+        elif path == "/sitemap.xml":
+            self._send(200, SITEMAP, "application/xml; charset=utf-8")
+        elif path == "/favicon.ico":
+            self._send(204, "")
+        else:
+            self._send(404, shell("/", "Tidak Ditemukan", "Halaman tidak ada.",
+                "<div class='wrap pghead'><div class='kick'>404</div><h1>Ruang <em>tidak ada</em>.</h1>"
+                "<p class='lead'>Tautan mungkin salah atau sudah dipindahkan.</p>"
+                "<div style='margin-top:28px'><a href='/' class='btn solid'>Kembali ke Beranda</a></div></div>"))
+
+    do_HEAD = do_GET
+
+    def log_message(self, fmt, *args):
+        print("  %s -> %s" % (self.address_string(), fmt % args))
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+if __name__ == "__main__":
+    print("=" * 52)
+    print("  ATELIER NODE v4 AKTIF — 10 ruang")
+    print("  http://localhost:%d" % PORT)
+    print("  Rate limit: %d req / %ds per IP" % (RATE_LIMIT, RATE_WINDOW))
+    print("=" * 52)
+    try:
+        with Server((HOST, PORT), Handler) as httpd:
+            httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[!] Node dimatikan.")
+PYEOF
+            cd ~/bio_link
+python - << 'EOF'
+import pathlib
+p = pathlib.Path("app.py"); s = p.read_text()
+anchor = '<a class="clink" href="https://fastwork.id/user/alfiliaor_web" target="_blank" rel="noopener"><i class="fas fa-briefcase"></i> Fastwork</a>'
+add = anchor + """
+    <a class="clink" href="https://hackerone.com/javanova?type=user" target="_blank" rel="noopener"><i class="fas fa-bug"></i> HackerOne</a>
+    <a class="clink" href="https://gitlab.com/yuana448" target="_blank" rel="noopener"><i class="fab fa-gitlab"></i> GitLab</a>
+    <a class="clink" href="https://www.linkedin.com/in/fidilia-salsabilla-8b18b4449/" target="_blank" rel="noopener"><i class="fab fa-linkedin-in"></i> LinkedIn</a>"""
+if "hackerone.com" in s:
+    print("sudah ada, dilewati")
+else:
+    p.write_text(s.replace(anchor, add, 1)); print("3 tautan ditambahkan")
+EOF
+  python -m py_compile app.py && echo "SINTAKS OK"
+./stop.sh; ./start.sh
+curl -s http://localhost:8888/kontak | grep -c "hackerone\|gitlab\|linkedin"
+  
